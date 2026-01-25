@@ -418,44 +418,49 @@ class CompileTime {
 					var itemAsArray = macro [
 						$v{listID},
 						$v{
-							classNames.join(",")]];
-							classListsMetaArray.push(itemAsArray);
+							classNames.join(",")
 						}
-						ct.meta.add('classLists', classListsMetaArray, Context.currentPos());
-						default:
+					];
+					classListsMetaArray.push(itemAsArray);
 				}
-
-				return;
+				ct.meta.add('classLists', classListsMetaArray, Context.currentPos());
+			default:
 		}
 
-		static function classMatchesSearch(className:String, classType:ClassType, search:CompileTimeClassSearch):Bool {
-			if (search.inPackage != null) {
-				if (search.includeChildPackages) {
-					if (className.startsWith(search.inPackage + ".") == false)
-						return false;
-				} else {
-					var re = new EReg("^" + search.inPackage + "\\.([A-Z][a-zA-Z0-9]*)$", "");
-					if (re.match(className) == false)
-						return false;
-				}
-			}
+		return;
+	}
 
-			if (search.baseClass != null) {
-				if (search.baseClass.isInterface) {
-					if (implementsInterface(classType, search.baseClass) == false)
-						return false;
-				} else {
-					if (isSubClassOfBaseClass(classType, search.baseClass) == false)
-						return false;
-				}
+	static function classMatchesSearch(className:String, classType:ClassType, search:CompileTimeClassSearch):Bool {
+		if (search.inPackage != null) {
+			if (search.includeChildPackages) {
+				if (className.startsWith(search.inPackage + ".") == false)
+					return false;
+			} else {
+				var re = new EReg("^" + search.inPackage + "\\.([A-Z][a-zA-Z0-9]*)$", "");
+				if (re.match(className) == false)
+					return false;
 			}
-
-			return true;
 		}
+
+		if (search.baseClass != null) {
+			if (search.baseClass.isInterface) {
+				if (implementsInterface(classType, search.baseClass) == false)
+					return false;
+			} else {
+				if (isSubClassOfBaseClass(classType, search.baseClass) == false)
+					return false;
+			}
+		}
+
+		return true;
+	}
 	#end
 }
+
 #if macro
 typedef CompileTimeClassSearch = {
-	inPackage:String, includeChildPackages:Bool, baseClass:ClassType
+	inPackage:String,
+	includeChildPackages:Bool,
+	baseClass:ClassType
 }
 #end
