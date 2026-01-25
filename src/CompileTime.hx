@@ -1,5 +1,6 @@
 /****
  * Copyright (c) 2013 Jason O'Neil
+ * Enhanced version with additional features and improvements
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
  *
@@ -42,20 +43,45 @@ class CompileTime {
 		return toExpr(Date.now().toString());
 	}
 
-	/** Returns a string of the current git sha1 */
+	/** Returns a Unix timestamp of when this was compiled */
+	macro public static function buildTimestamp():ExprOf<Float> {
+		return toExpr(Date.now().getTime());
+	}
+
+	/** Returns a string of the current git sha1 (short) */
 	macro public static function buildGitCommitSha():ExprOf<String> {
-		try {
-			var proc = new sys.io.Process('git', ['log', "--pretty=format:'%h'", '-n', '1']);
-			var sha1 = proc.stdout.readLine();
-			return toExpr(sha1);
-		} catch (e:Dynamic) {
-			return toExpr("unknown");
-		}
+		return toExpr(getGitInfo('log', ["--pretty=format:%h", '-n', '1']));
+	}
+
+	/** Returns a string of the current git sha1 (full) */
+	macro public static function buildGitCommitShaLong():ExprOf<String> {
+		return toExpr(getGitInfo('log', ["--pretty=format:%H", '-n', '1']));
+	}
+
+	/** Returns the current git branch name */
+	macro public static function buildGitBranch():ExprOf<String> {
+		return toExpr(getGitInfo('rev-parse', ['--abbrev-ref', 'HEAD']));
+	}
+
+	/** Returns the git commit message */
+	macro public static function buildGitCommitMessage():ExprOf<String> {
+		return toExpr(getGitInfo('log', ["--pretty=format:%s", '-n', '1']));
+	}
+
+	/** Returns whether the git working directory is clean */
+	macro public static function buildGitIsClean():ExprOf<Bool> {
+		var status = getGitInfo('status', ['--porcelain']);
+		return toExpr(status == "" || status == "unknown");
 	}
 
 	/** Reads a file at compile time, and inserts the contents into your code as a string.  The file path is resolved using `Context.resolvePath`, so it will search all your class paths */
 	macro public static function readFile(path:String):ExprOf<String> {
 		return toExpr(loadFileAsString(path));
+	}
+
+	/** Reads a file at compile time and returns it as a ByteArray/Bytes */
+	macro public static function readFileBytes(path:String):ExprOf<haxe.io.Bytes> {
+		return toExpr(loadFileAsBytes(path));
 	}
 
 	/** Reads a file at compile time, and inserts the contents into your code as an interpolated string, similar to using 'single $quotes'.  */
@@ -66,27 +92,26 @@ class CompileTime {
 	/** Same as readFile, but checks that the file is valid Json */
 	macro public static function readJsonFile(path:String):ExprOf<String> {
 		var content = loadFileAsString(path);
-		try
-			Json.parse(content)
-		catch (e:Dynamic) {
-			haxe.macro.Context.error('Json from $path failed to validate: $e', Context.currentPos());
-		}
+		validateJson(content, path);
 		return toExpr(content);
 	}
 
-	/** Same as readFile, but checks that the file is valid Json */
+	/** Parses a JSON file at compile time and returns it as a typed object */
 	macro public static function parseJsonFile(path:String):ExprOf<{}> {
 		var content = loadFileAsString(path);
-		var obj = try Json.parse(content) catch (e:Dynamic) {
-			haxe.macro.Context.error('Json from $path failed to validate: $e', Context.currentPos());
-		}
+		var obj = validateJson(content, path);
 		return toExpr(obj);
 	}
 
 	#if yaml
+	/** Parses a YAML file at compile time and returns it as an object */
 	macro public static function parseYamlFile(path:String) {
 		var content = loadFileAsString(path);
-		var data = Yaml.parse(content, Parser.options().useObjects());
+		var data = try {
+			Yaml.parse(content, Parser.options().useObjects());
+		} catch (e:Dynamic) {
+			return haxe.macro.Context.error('YAML from $path failed to parse: $e', Context.currentPos());
+		}
 		var s = haxe.Json.stringify(data);
 		var json = haxe.Json.parse(s);
 		return toExpr(json);
@@ -96,16 +121,12 @@ class CompileTime {
 	/** Same as readFile, but checks that the file is valid Xml */
 	macro public static function readXmlFile(path:String):ExprOf<String> {
 		var content = loadFileAsString(path);
-		try
-			Xml.parse(content)
-		catch (e:Dynamic) {
-			haxe.macro.Context.error('Xml from $path failed to validate: $e', Context.currentPos());
-		}
+		validateXml(content, path);
 		return toExpr(content);
 	}
 
 	#if markdown
-	/** Same as readFile, but checks that the file is valid Xml */
+	/** Reads a Markdown file and converts it to HTML at compile time */
 	macro public static function readMarkdownFile(path:String):ExprOf<String> {
 		var content = loadFileAsString(path);
 		try {
@@ -118,6 +139,52 @@ class CompileTime {
 	}
 	#end
 
+	/** Gets the contents of a directory at compile time */
+	macro public static function readDirectory(path:String):ExprOf<Array<String>> {
+		try {
+			var p = Context.resolvePath(path);
+			Context.registerModuleDependency(Context.getLocalModule(), p);
+			var files = sys.FileSystem.readDirectory(p);
+			return toExpr(files);
+		} catch (e:Dynamic) {
+			return haxe.macro.Context.error('Failed to read directory $path: $e', Context.currentPos());
+		}
+	}
+
+	/** Checks if a file exists at compile time */
+	macro public static function fileExists(path:String):ExprOf<Bool> {
+		try {
+			var p = Context.resolvePath(path);
+			var exists = sys.FileSystem.exists(p);
+			return toExpr(exists);
+		} catch (e:Dynamic) {
+			return toExpr(false);
+		}
+	}
+
+	/** Gets an environment variable at compile time */
+	macro public static function getEnv(name:String, ?defaultValue:String):ExprOf<String> {
+		var value = Sys.getEnv(name);
+		if (value == null) {
+			value = defaultValue != null ? defaultValue : "";
+		}
+		return toExpr(value);
+	}
+
+	/** Gets a define value at compile time */
+	macro public static function getDefine(name:String, ?defaultValue:String):ExprOf<String> {
+		var value = Context.definedValue(name);
+		if (value == null) {
+			value = defaultValue != null ? defaultValue : "";
+		}
+		return toExpr(value);
+	}
+
+	/** Returns true if a define is set */
+	macro public static function isDefined(name:String):ExprOf<Bool> {
+		return toExpr(Context.defined(name));
+	}
+
 	/** Import a package at compile time.  Is a simple mapping to haxe.macro.Compiler.include(), but means you don't have to wrap your code in conditionals. */
 	macro public static function importPackage(path:String, ?recursive:Bool = true, ?ignore:Array<String>, ?classPaths:Array<String>) {
 		haxe.macro.Compiler.include(path, recursive, ignore, classPaths);
@@ -128,9 +195,6 @@ class CompileTime {
 		classes that extend a particular type, and you can choose whether to look for classes recursively or not. */
 	macro public static function getAllClasses<T>(?inPackage:String, ?includeChildPackages:Bool = true,
 			?extendsBaseClass:ExprOf<Class<T>>):ExprOf<Iterable<Class<T>>> {
-		// Add the onGenerate function to search for matching classes and add them to our metadata.
-		// Make sure we run it once per-compile, not once per-controller-per-compile.
-		// Also ensure that it is re-run for each new compile if using the compiler cache.
 		#if (haxe_ver < 4.0)
 		Context.onMacroContextReused(function() {
 			allClassesSearches = new Map();
@@ -141,7 +205,6 @@ class CompileTime {
 			Context.onGenerate(checkForMatchingClasses);
 		}
 
-		// Add the search to our static var so we can get results during onGenerate
 		var baseClass:ClassType = getClassTypeFromExpr(extendsBaseClass);
 		var baseClassName:String = (baseClass == null) ? "" : baseClass.pack.join('.') + '.' + baseClass.name;
 		var listID = '$inPackage,$includeChildPackages,$baseClassName';
@@ -157,18 +220,92 @@ class CompileTime {
 			return macro CompileTimeClassList.get($v{listID});
 	}
 
+	/** Returns the Haxe compiler version as a string */
+	macro public static function getHaxeVersion():ExprOf<String> {
+		return toExpr(Context.definedValue("haxe"));
+	}
+
+	/** Returns the current platform/target being compiled for */
+	macro public static function getTarget():ExprOf<String> {
+		var target =
+			#if js
+			"js"
+			#elseif cpp
+			"cpp"
+			#elseif cs
+			"cs"
+			#elseif java
+			"java"
+			#elseif python
+			"python"
+			#elseif php
+			"php"
+			#elseif lua
+			"lua"
+			#elseif neko
+			"neko"
+			#elseif flash
+			"flash"
+			#elseif hl
+			"hl"
+			#else
+			"unknown"
+			#end;
+		return toExpr(target);
+	}
+
 	#if macro
 	static function toExpr(v:Dynamic) {
 		return Context.makeExpr(v, Context.currentPos());
 	}
 
-	static function loadFileAsString(path:String) {
+	static function loadFileAsString(path:String):String {
 		try {
 			var p = Context.resolvePath(path);
 			Context.registerModuleDependency(Context.getLocalModule(), p);
 			return sys.io.File.getContent(p);
 		} catch (e:Dynamic) {
 			return haxe.macro.Context.error('Failed to load file $path: $e', Context.currentPos());
+		}
+	}
+
+	static function loadFileAsBytes(path:String):haxe.io.Bytes {
+		try {
+			var p = Context.resolvePath(path);
+			Context.registerModuleDependency(Context.getLocalModule(), p);
+			return sys.io.File.getBytes(p);
+		} catch (e:Dynamic) {
+			return haxe.macro.Context.error('Failed to load file $path: $e', Context.currentPos());
+		}
+	}
+
+	static function validateJson(content:String, path:String):Dynamic {
+		try {
+			return Json.parse(content);
+		} catch (e:Dynamic) {
+			return haxe.macro.Context.error('JSON from $path failed to validate: $e', Context.currentPos());
+		}
+	}
+
+	static function validateXml(content:String, path:String):Xml {
+		try {
+			return Xml.parse(content);
+		} catch (e:Dynamic) {
+			return haxe.macro.Context.error('XML from $path failed to validate: $e', Context.currentPos());
+		}
+	}
+
+	static function getGitInfo(command:String, args:Array<String>):String {
+		try {
+			var proc = new sys.io.Process('git', [command].concat(args));
+			var result = proc.stdout.readLine();
+			var exitCode = proc.exitCode();
+			if (exitCode != 0) {
+				return "unknown";
+			}
+			return result;
+		} catch (e:Dynamic) {
+			return "unknown";
 		}
 	}
 
@@ -203,38 +340,43 @@ class CompileTime {
 	}
 
 	static function getClassTypeFromExpr(e:Expr):ClassType {
+		if (e == null)
+			return null;
+
 		var ct:ClassType = null;
 		var fullClassName = null;
 		var parts = new Array<String>();
 		var nextSection = e.expr;
+
 		while (nextSection != null) {
-			// Break the loop unless we explicitly encounter a next section...
 			var s = nextSection;
 			nextSection = null;
 
 			switch (s) {
-				// Might be a direct class name, no packages
 				case EConst(c):
 					switch (c) {
 						case CIdent(s):
 							if (s != "null") parts.unshift(s);
 						default:
 					}
-				// Might be a fully qualified package name
-				// { expr => EField({ expr => EField({ expr => EConst(CIdent(sys)), pos => #pos(src/server/Server.hx:35: characters 53-56) },db), pos => #pos(src/server/Server.hx:35: characters 53-59) },Object), pos => #pos(src/server/Server.hx:35: characters 53-66) }
 				case EField(e, field):
 					parts.unshift(field);
 					nextSection = e.expr;
 				default:
 			}
 		}
+
 		fullClassName = parts.join(".");
 		if (fullClassName != "") {
-			switch (Context.follow(Context.getType(fullClassName))) {
-				case TInst(classType, _):
-					ct = classType.get();
-				default:
-					throw "Currently CompileTime.getAllClasses() can only search by package name or base class, not interface, typedef etc.";
+			try {
+				switch (Context.follow(Context.getType(fullClassName))) {
+					case TInst(classType, _):
+						ct = classType.get();
+					default:
+						throw "Currently CompileTime.getAllClasses() can only search by package name or base class, not interface, typedef etc.";
+				}
+			} catch (e:Dynamic) {
+				Context.warning('Could not resolve type: $fullClassName', Context.currentPos());
 			}
 		}
 		return ct;
@@ -243,21 +385,17 @@ class CompileTime {
 	static var allClassesSearches:Map<String, CompileTimeClassSearch> = new Map();
 
 	static function checkForMatchingClasses(allTypes:Array<haxe.macro.Type>) {
-		// Prepare a map to store our results.
 		var getAllClassesResult:Map<String, Array<String>> = new Map();
 		for (listID in allClassesSearches.keys()) {
 			getAllClassesResult[listID] = [];
 		}
 
-		// Go through all the types and look for matches.
 		for (type in allTypes) {
 			switch type {
-				// We only care for Classes
 				case TInst(t, _):
 					var className = t.toString();
 					var classType = t.get();
-					if (t.get().isInterface == false) {
-						// Check if this class matches any of our searches.
+					if (classType.isInterface == false) {
 						for (listID in allClassesSearches.keys()) {
 							var search = allClassesSearches[listID];
 							if (classMatchesSearch(className, classType, search)) {
@@ -269,60 +407,55 @@ class CompileTime {
 			}
 		}
 
-		// Add the results to some metadata so it's available at runtime.
 		switch (Context.getType("CompileTimeClassList")) {
 			case TInst(classType, _):
 				var ct = classType.get();
-				// Get rid of any existing metadata (if using the compiler cache)
 				if (ct.meta.has('classLists'))
 					ct.meta.remove('classLists');
-				// Add the class names to CompileTimeClassList as metadata
 				var classListsMetaArray:Array<Expr> = [];
 				for (listID in getAllClassesResult.keys()) {
 					var classNames = getAllClassesResult[listID];
-					var itemAsArray = macro [$v{listID}, $v{classNames.join(",")}];
-					classListsMetaArray.push(itemAsArray);
+					var itemAsArray = macro [
+						$v{listID},
+						$v{
+							classNames.join(",")]];
+							classListsMetaArray.push(itemAsArray);
+						}
+						ct.meta.add('classLists', classListsMetaArray, Context.currentPos());
+						default:
 				}
-				ct.meta.add('classLists', classListsMetaArray, Context.currentPos());
-			default:
+
+				return;
 		}
 
-		return;
-	}
-
-	static function classMatchesSearch(className:String, classType:ClassType, search:CompileTimeClassSearch):Bool {
-		// Check if it belongs to a certain package or subpackage
-		if (search.inPackage != null) {
-			if (search.includeChildPackages) {
-				if (className.startsWith(search.inPackage + ".") == false)
-					return false;
-			} else {
-				var re = new EReg("^" + search.inPackage + "\\.([A-Z][a-zA-Z0-9]*)$", "");
-				if (re.match(className) == false)
-					return false;
+		static function classMatchesSearch(className:String, classType:ClassType, search:CompileTimeClassSearch):Bool {
+			if (search.inPackage != null) {
+				if (search.includeChildPackages) {
+					if (className.startsWith(search.inPackage + ".") == false)
+						return false;
+				} else {
+					var re = new EReg("^" + search.inPackage + "\\.([A-Z][a-zA-Z0-9]*)$", "");
+					if (re.match(className) == false)
+						return false;
+				}
 			}
-		}
 
-		// Check if it is a subclass of a certain type
-		if (search.baseClass != null) {
-			if (search.baseClass.isInterface) {
-				if (implementsInterface(classType, search.baseClass) == false)
-					return false;
-			} else {
-				if (isSubClassOfBaseClass(classType, search.baseClass) == false)
-					return false;
+			if (search.baseClass != null) {
+				if (search.baseClass.isInterface) {
+					if (implementsInterface(classType, search.baseClass) == false)
+						return false;
+				} else {
+					if (isSubClassOfBaseClass(classType, search.baseClass) == false)
+						return false;
+				}
 			}
-		}
 
-		return true;
-	}
+			return true;
+		}
 	#end
 }
-
 #if macro
 typedef CompileTimeClassSearch = {
-	inPackage:String,
-	includeChildPackages:Bool,
-	baseClass:ClassType
+	inPackage:String, includeChildPackages:Bool, baseClass:ClassType
 }
 #end
