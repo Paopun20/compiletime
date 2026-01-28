@@ -227,30 +227,24 @@ class CompileTime {
 
 	/** Returns the current platform/target being compiled for */
 	macro public static function getTarget():ExprOf<String> {
-		var target =
-			#if js
-			"js"
-			#elseif cpp
-			"cpp"
-			#elseif cs
-			"cs"
-			#elseif java
-			"java"
-			#elseif python
-			"python"
-			#elseif php
-			"php"
-			#elseif lua
-			"lua"
-			#elseif neko
-			"neko"
-			#elseif flash
-			"flash"
-			#elseif hl
-			"hl"
-			#else
-			"unknown"
-			#end;
+		var target = #if windows
+		"windows"
+		#elseif linux
+		"linux"
+		#elseif mac
+		"mac"
+		#elseif ios
+		"ios"
+		#elseif android
+		"android"
+		#elseif wasm
+		"wasm"
+		#elseif native
+		"native"
+		#else
+		"unknown"
+		#end;
+		
 		return toExpr(target);
 	}
 
