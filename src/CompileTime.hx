@@ -225,28 +225,64 @@ class CompileTime {
 		return toExpr(Context.definedValue("haxe"));
 	}
 
-	/** Returns the current platform/target being compiled for */
-	macro public static function getTarget():ExprOf<String> {
-		var target = #if windows
-		"windows"
-		#elseif linux
-		"linux"
-		#elseif mac
-		"mac"
-		#elseif ios
-		"ios"
-		#elseif android
-		"android"
-		#elseif wasm
-		"wasm"
-		#elseif native
-		"native"
-		#else
-		"unknown"
-		#end;
-		
-		return toExpr(target);
-	}
+/** Returns the current platform/target being compiled for */
+macro public static function getTarget():ExprOf<String> {
+    var target = #if windows
+        "windows"
+    #elseif linux
+        "linux"
+    #elseif mac
+        "mac"
+    #elseif ios
+        "ios"
+    #elseif android
+        "android"
+    #elseif wasm
+        "wasm"
+    #elseif switch
+        "nintendo switch"
+    #elseif ps4
+        "playstation 4"
+    #elseif ps5
+        "playstation 5"
+    #elseif xbox
+        "xbox"
+    #elseif tvos
+        "tvos"
+    #elseif watchos
+        "watchos"
+    #elseif html5
+        "html5"
+    #elseif js
+        "javascript"
+    #elseif flash
+        "flash"
+    #elseif neko
+        "neko"
+    #elseif php
+        "php"
+    #elseif python
+        "python"
+    #elseif lua
+        "lua"
+    #elseif java
+        "java"
+    #elseif cs
+        "c#"
+    #elseif cpp
+        "c++"
+    #elseif hl
+        "hashlink"
+    #elseif eval
+        "eval"
+    #elseif native
+        "native"
+    #else
+        "unknown"
+    #end;
+    
+    return toExpr(target);
+}
 
 	#if macro
 	static function toExpr(v:Dynamic) {
