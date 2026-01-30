@@ -103,6 +103,57 @@ class CompileTime {
 		return toExpr(obj);
 	}
 
+/** Gets the version of a haxelib library at compile time */
+macro public static function getLibraryVersion(name:String):ExprOf<String> {
+    #if macro
+    var version = try {
+        var proc = new sys.io.Process('haxelib', ['path', name]);
+        var output = proc.stdout.readAll().toString();
+        var exitCode = proc.exitCode();
+        
+        if (exitCode != 0) {
+            "unknown";
+        } else {
+            // Parse the first line which contains the path with version
+            var lines = output.split('\n');
+            if (lines.length > 0) {
+                var firstLine = lines[0];
+                // Extract version from path like: /path/to/haxelib/library/1.2.3/
+                var versionRegex = ~/\/([0-9]+\.[0-9]+\.[0-9]+[^\/]*)\/?$/;
+                if (versionRegex.match(firstLine)) {
+                    versionRegex.matched(1);
+                } else {
+                    // Try alternative format: library:version
+                    var altRegex = ~/[\\\/]([0-9]+[^\\\/]+)[\\\/]?$/;
+                    if (altRegex.match(firstLine)) {
+                        altRegex.matched(1);
+                    } else {
+                        "unknown";
+                    }
+                }
+            } else {
+                "unknown";
+            }
+        }
+    } catch (e:Dynamic) {
+        "unknown";
+    }
+    return toExpr(version);
+    #end
+}
+
+/** Gets an environment variable and warns if not set */
+macro public static function requireEnv(name:String):ExprOf<String> {
+    var value = Sys.getEnv(name);
+    if (value == null || value == "") {
+        Context.warning('Environment variable $name is not set', Context.currentPos());
+        value = "";
+    }
+    return toExpr(value);
+}
+
+
+
 	#if yaml
 	/** Parses a YAML file at compile time and returns it as an object */
 	macro public static function parseYamlFile(path:String) {
